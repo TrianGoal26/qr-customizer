@@ -14,6 +14,9 @@ const GradientShapeQR = () => {
   const padding = 20;
   const pixelSize = 6.5;
   const pixelGap = 0.3;
+  
+  // Array per memorizzare i rettangoli e i loro colori per l'SVG
+  const [svgElements, setSvgElements] = useState([]);
 
   useEffect(() => {
     const fullUrl = dynamicParam 
@@ -69,10 +72,17 @@ const GradientShapeQR = () => {
       b = Math.round(b2 + (b3 - b2) * adjustedFactor);
     }
     
-    return `rgb(${r}, ${g}, ${b})`;
+    // Converti i valori RGB in formato esadecimale per SVG
+    const toHex = (c) => {
+      const hex = c.toString(16);
+      return hex.length === 1 ? "0" + hex : hex;
+    };
+    
+    const hexColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    return { rgb: `rgb(${r}, ${g}, ${b})`, hex: hexColor };
   };
 
-  const isInShape = (x, y, shape, width, height, centerX, centerY) => {
+  const isInShape = (x, y, shape, width, height, centerX = size / 2, centerY = size / 2) => {
     switch (shape) {
       case "triangle": {
         const sideLength = width;
@@ -115,6 +125,9 @@ const GradientShapeQR = () => {
       const ctx = canvas.getContext('2d');
       
       ctx.clearRect(0, 0, size, size);
+      
+      // Array temporaneo per gli elementi SVG
+      const tempSvgElements = [];
 
       const effectiveSize = size - 2 * padding;
       let shapeWidth, shapeHeight;
@@ -142,7 +155,7 @@ const GradientShapeQR = () => {
       switch (shape) {
         case "triangle": {
           const triangleHeight = (Math.sqrt(3) / 2) * shapeWidth;
-          qrX = centerX - qrSize / 2.3 - 8;;
+          qrX = centerX - qrSize / 2.3 - 8;
           qrY = centerY - triangleHeight/2 + (triangleHeight * 0.50);
           break;
         }
@@ -181,11 +194,22 @@ const GradientShapeQR = () => {
             const y = centerY - shapeHeight/2 + row * pixelSize;
             
             if (!qrMaskArea(x, y) && 
-                isInShape(x, y, shape, shapeWidth, shapeHeight, centerX, centerY) && 
+                isInShape(x, y, shape, shapeWidth, shapeHeight) && 
                 Math.random() < adjustedPixelGap) {
               const gradientProgress = col / cols;
-              ctx.fillStyle = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientProgress);
+              const color = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientProgress);
+              ctx.fillStyle = color.rgb;
               ctx.fillRect(x, y, pixelSize - 0.5, pixelSize - 0.5);
+              
+              // Salva i dati per SVG
+              tempSvgElements.push({
+                type: 'rect',
+                x,
+                y,
+                width: pixelSize - 0.5,
+                height: pixelSize - 0.5,
+                fill: color.hex
+              });
             }
           }
         }
@@ -200,25 +224,85 @@ const GradientShapeQR = () => {
       const qrData = qrCtx.getImageData(0, 0, qrSize, qrSize);
 
       const gradientQR = ctx.createImageData(qrSize, qrSize);
-      for (let i = 0; i < qrData.data.length; i += 4) {
-        const x = (i / 4) % qrSize;
-        const gradientFactor = x / qrSize;
-        
-        if (qrData.data[i] === 0) {
-          const color = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientFactor);
-          const rgb = color.match(/\d+/g).map(Number);
+      // Raggruppa i pixel del QR code per creare rettangoli più grandi quando possibile
+      const qrBlocks = [];
+      const processedIndices = new Set();
+
+      for (let y = 0; y < qrSize; y++) {
+        for (let x = 0; x < qrSize; x++) {
+          const index = (y * qrSize + x) * 4;
           
-          gradientQR.data[i] = rgb[0];
-          gradientQR.data[i + 1] = rgb[1];
-          gradientQR.data[i + 2] = rgb[2];
-          gradientQR.data[i + 3] = 255;
-        } else {
-          gradientQR.data[i + 3] = 0;
+          // Salta se è già stato processato o se è bianco (trasparente)
+          if (processedIndices.has(index) || qrData.data[index] !== 0) continue;
+          
+          const gradientFactor = x / qrSize;
+          const color = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientFactor);
+          
+          // Trova la larghezza del blocco contiguo
+          let width = 1;
+          while (x + width < qrSize && 
+                qrData.data[(y * qrSize + (x + width)) * 4] === 0 &&
+                !processedIndices.has((y * qrSize + (x + width)) * 4)) {
+            width++;
+          }
+          
+          // Trova l'altezza del blocco contiguo
+          let height = 1;
+          let validBlock = true;
+          
+          whileLoop:
+          while (y + height < qrSize) {
+            for (let i = 0; i < width; i++) {
+              const checkIndex = ((y + height) * qrSize + (x + i)) * 4;
+              if (qrData.data[checkIndex] !== 0 || processedIndices.has(checkIndex)) {
+                validBlock = false;
+                break whileLoop;
+              }
+            }
+            height++;
+          }
+          
+          // Segna tutti i pixel nel blocco come processati
+          for (let j = 0; j < height; j++) {
+            for (let i = 0; i < width; i++) {
+              processedIndices.add(((y + j) * qrSize + (x + i)) * 4);
+            }
+          }
+          
+          // Aggiungi il blocco all'array
+          qrBlocks.push({
+            x: x + qrX,
+            y: y + qrY,
+            width,
+            height,
+            fill: color.hex
+          });
+          
+          // Disegna sul canvas
+          const rgb = color.hex.match(/[\da-f]{2}/gi).map(hex => parseInt(hex, 16));
+          for (let j = 0; j < height; j++) {
+            for (let i = 0; i < width; i++) {
+              const idx = ((y + j) * qrSize + (x + i)) * 4;
+              gradientQR.data[idx] = rgb[0];
+              gradientQR.data[idx + 1] = rgb[1];
+              gradientQR.data[idx + 2] = rgb[2];
+              gradientQR.data[idx + 3] = 255;
+            }
+          }
         }
       }
 
+      // Aggiungi i blocchi QR agli elementi SVG
+      tempSvgElements.push(...qrBlocks.map(block => ({
+        type: 'rect',
+        ...block
+      })));
+
       tempCtx.putImageData(gradientQR, 0, 0);
       ctx.drawImage(tempCanvas, qrX, qrY);
+      
+      // Aggiorna lo stato SVG
+      setSvgElements(tempSvgElements);
 
     } catch (err) {
       console.error('Error generating shape:', err);
@@ -226,12 +310,69 @@ const GradientShapeQR = () => {
   };
 
   const handleDownload = () => {
-    if (!canvasRef.current) return;
+    const centerX = size / 2;
+    const centerY = size / 2;
+    const qrSize = 200;
     
+    // Crea un documento SVG con tutti gli elementi
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+    svg.setAttribute("xmlns", svgNS);
+    
+    // Aggiungi un gruppo per il QR code e un altro per lo sfondo
+    const backgroundGroup = document.createElementNS(svgNS, "g");
+    backgroundGroup.setAttribute("id", "background");
+    
+    const qrGroup = document.createElementNS(svgNS, "g");
+    qrGroup.setAttribute("id", "qr-code");
+    
+    // Aggiungi tutti gli elementi SVG
+    svgElements.forEach(element => {
+      if (element.type === 'rect') {
+        const rect = document.createElementNS(svgNS, "rect");
+        rect.setAttribute("x", element.x);
+        rect.setAttribute("y", element.y);
+        rect.setAttribute("width", element.width);
+        rect.setAttribute("height", element.height);
+        rect.setAttribute("fill", element.fill);
+        
+        // Determina se è parte del QR code o dello sfondo
+        const isQrPart = element.x >= (centerX - qrSize / 2.3 - 20) && 
+                         element.x <= (centerX + qrSize / 2.3 + 20) &&
+                         element.y >= (centerY - qrSize / 2 - 20) && 
+                         element.y <= (centerY + qrSize / 2 + 20);
+        
+        if (isQrPart) {
+          qrGroup.appendChild(rect);
+        } else {
+          backgroundGroup.appendChild(rect);
+        }
+      }
+    });
+    
+    // Aggiungi i gruppi al SVG
+    svg.appendChild(backgroundGroup);
+    svg.appendChild(qrGroup);
+    
+    // Serializza l'SVG in una stringa
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svg);
+    
+    // Crea un Blob SVG
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    // Crea il link di download
     const link = document.createElement('a');
-    link.download = 'gradient-qr-shape.png';
-    link.href = canvasRef.current.toDataURL('image/png');
+    link.href = url;
+    link.download = 'gradient-qr-shape.svg';
     link.click();
+    
+    // Pulisci
+    URL.revokeObjectURL(url);
   };
 
   useEffect(() => {
@@ -317,7 +458,7 @@ const GradientShapeQR = () => {
         onClick={handleDownload}
         className="mb-6 px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
       >
-        Download QR Code
+        Download QR Code as SVG
       </button>
 
       <div className="p-6 rounded-lg w-full max-w-md">
