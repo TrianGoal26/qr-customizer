@@ -15,6 +15,7 @@ const GradientShapeQR = () => {
   const padding = 20;
   const pixelSize = 6.5;
   const pixelGap = 0.3;
+  const [qrModules, setQrModules] = useState([]);
 
   useEffect(() => {
     const fullUrl = dynamicParam 
@@ -24,20 +25,41 @@ const GradientShapeQR = () => {
   }, [baseUrl, dynamicParam]);
 
   const generateQRCode = async (text) => {
-    const QRCode = await import('qrcode');
-    return new Promise((resolve) => {
-      QRCode.toCanvas(null, text, {
-        width: 200,
-        margin: 0,
-        errorCorrectionLevel: 'H',
-        color: {
-          dark: '#000000',
-          light: '#FFFFFF'
-        }
-      }, (error, canvas) => {
-        if (!error) resolve(canvas);
+    try {
+      const QRCode = await import('qrcode');
+      return new Promise((resolve) => {
+        // Generate QR code
+        QRCode.create(text, {
+          errorCorrectionLevel: 'H'
+        }, (err, qrData) => {
+          if (err) {
+            console.error("QR code generation error:", err);
+            resolve([]);
+            return;
+          }
+          
+          // Extract module data (the actual QR code data points)
+          const modules = qrData.modules.data;
+          const moduleCount = qrData.modules.size;
+          
+          // Convert to 2D array format
+          const moduleArray = [];
+          for (let y = 0; y < moduleCount; y++) {
+            const row = [];
+            for (let x = 0; x < moduleCount; x++) {
+              const index = y * moduleCount + x;
+              row.push(modules[index]);
+            }
+            moduleArray.push(row);
+          }
+          
+          resolve(moduleArray);
+        });
       });
-    });
+    } catch (error) {
+      console.error("Error importing QRCode:", error);
+      return [];
+    }
   };
 
   const interpolateThreeColors = (color1, color2, color3, factor) => {
@@ -71,6 +93,19 @@ const GradientShapeQR = () => {
     }
     
     return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  const rgbToHex = (rgb) => {
+    // Extract RGB values from string like "rgb(255, 0, 0)"
+    const match = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (!match) return "#000000";
+    
+    // Convert to hex
+    const r = parseInt(match[1], 10).toString(16).padStart(2, '0');
+    const g = parseInt(match[2], 10).toString(16).padStart(2, '0');
+    const b = parseInt(match[3], 10).toString(16).padStart(2, '0');
+    
+    return `#${r}${g}${b}`;
   };
 
   const isInShape = (x, y, shape, width, height, centerX, centerY) => {
@@ -108,15 +143,42 @@ const GradientShapeQR = () => {
     }
   };
 
-  const updateCanvas = async () => {
-    if (!canvasRef.current) return;
+  const generateShapePoints = (shape, shapeWidth, shapeHeight, centerX, centerY) => {
+    switch (shape) {
+      case "triangle": {
+        const triangleHeight = (Math.sqrt(3) / 2) * shapeWidth;
+        
+        const topX = centerX;
+        const topY = centerY - triangleHeight/2;
+        
+        const leftX = centerX - shapeWidth/2;
+        const leftY = centerY + triangleHeight/2;
+        
+        const rightX = centerX + shapeWidth/2;
+        const rightY = centerY + triangleHeight/2;
+        
+        return `${topX},${topY} ${leftX},${leftY} ${rightX},${rightY}`;
+      }
+      case "circle":
+        return null; // Per il cerchio useremo l'elemento circle di SVG
+      default:
+        return null;
+    }
+  };
 
+  const updateSVG = async () => {
+    if (!svgRef.current) return;
+    
     try {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
+      // Clear previous SVG content
+      while (svgRef.current.firstChild) {
+        svgRef.current.removeChild(svgRef.current.firstChild);
+      }
       
-      ctx.clearRect(0, 0, size, size);
-
+      // Get QR code data
+      const qrModulesData = await generateQRCode(text);
+      setQrModules(qrModulesData);
+      
       const effectiveSize = size - 2 * padding;
       let shapeWidth, shapeHeight;
       
@@ -133,46 +195,45 @@ const GradientShapeQR = () => {
 
       const centerX = size / 2;
       const centerY = size / 2;
-
-      const qrCanvas = await generateQRCode(text);
-      const qrSize = 200;
       
-      let qrX = centerX - qrSize / 2;
-      let qrY;
-      
-      switch (shape) {
-        case "triangle": {
-          const triangleHeight = (Math.sqrt(3) / 2) * shapeWidth;
-          qrX = centerX - qrSize / 2.3 - 8;;
-          qrY = centerY - triangleHeight/2 + (triangleHeight * 0.50);
-          break;
-        }
-        case "circle": {
-          qrY = centerY - qrSize/2;
-          break;
-        }
-        default:
-          qrY = centerY - qrSize / 2;
-      }
-
-      const qrMaskArea = (x, y) => {
-        if (shape === "triangle") {
-          return x >= qrX - 5 && 
-                 x <= qrX + qrSize + -1 && // Increased right padding
-                 y >= qrY - 5 && 
-                 y <= qrY + qrSize;
-        } else if (shape === "circle") {
-          return x >= qrX - 5 && 
-                 x <= qrX + qrSize + 5 && 
-                 y >= qrY - 10 && 
-                 y <= qrY + qrSize + 5;
-        }
-        return false;
-      };
-
+      // Draw the main shape
       if (shape !== "square") {
+        // Create a gradient
+        const gradientId = "shapeGradient";
+        const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+        gradient.setAttribute("id", gradientId);
+        gradient.setAttribute("x1", "0%");
+        gradient.setAttribute("y1", "0%");
+        gradient.setAttribute("x2", "100%");
+        gradient.setAttribute("y2", "0%");
+        
+        const stop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+        stop1.setAttribute("offset", "0%");
+        stop1.setAttribute("stop-color", fgColor1);
+        
+        const stop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+        stop2.setAttribute("offset", "50%");
+        stop2.setAttribute("stop-color", fgColor2);
+        
+        const stop3 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+        stop3.setAttribute("offset", "100%");
+        stop3.setAttribute("stop-color", fgColor3);
+        
+        gradient.appendChild(stop1);
+        gradient.appendChild(stop2);
+        gradient.appendChild(stop3);
+        
+        // Add gradient to defs
+        const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        defs.appendChild(gradient);
+        svgRef.current.appendChild(defs);
+        
+        // Draw shape with pixels
         const cols = Math.ceil(shapeWidth / pixelSize);
         const rows = Math.ceil(shapeHeight / pixelSize);
+        
+        // Create a group for all the pixels
+        const pixelGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
         
         const adjustedPixelGap = shape === "triangle" ? 0.6 : 0.6;
         
@@ -181,87 +242,149 @@ const GradientShapeQR = () => {
             const x = centerX - shapeWidth/2 + col * pixelSize;
             const y = centerY - shapeHeight/2 + row * pixelSize;
             
-            if (!qrMaskArea(x, y) && 
-                isInShape(x, y, shape, shapeWidth, shapeHeight, centerX, centerY) && 
+            if (isInShape(x, y, shape, shapeWidth, shapeHeight, centerX, centerY) && 
                 Math.random() < adjustedPixelGap) {
               const gradientProgress = col / cols;
-              ctx.fillStyle = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientProgress);
-              ctx.fillRect(x, y, pixelSize - 0.5, pixelSize - 0.5);
+              const color = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientProgress);
+              const hexColor = rgbToHex(color);
+              
+              const pixel = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              pixel.setAttribute("x", x);
+              pixel.setAttribute("y", y);
+              pixel.setAttribute("width", pixelSize - 0.5);
+              pixel.setAttribute("height", pixelSize - 0.5);
+              pixel.setAttribute("fill", hexColor);
+              
+              pixelGroup.appendChild(pixel);
             }
           }
         }
-      }
-
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = qrSize;
-      tempCanvas.height = qrSize;
-      const tempCtx = tempCanvas.getContext('2d');
-      
-      const qrCtx = qrCanvas.getContext('2d');
-      const qrData = qrCtx.getImageData(0, 0, qrSize, qrSize);
-
-      const gradientQR = ctx.createImageData(qrSize, qrSize);
-      for (let i = 0; i < qrData.data.length; i += 4) {
-        const x = (i / 4) % qrSize;
-        const gradientFactor = x / qrSize;
         
-        if (qrData.data[i] === 0) {
-          const color = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientFactor);
-          const rgb = color.match(/\d+/g).map(Number);
-          
-          gradientQR.data[i] = rgb[0];
-          gradientQR.data[i + 1] = rgb[1];
-          gradientQR.data[i + 2] = rgb[2];
-          gradientQR.data[i + 3] = 255;
-        } else {
-          gradientQR.data[i + 3] = 0;
-        }
+        svgRef.current.appendChild(pixelGroup);
       }
-
-      tempCtx.putImageData(gradientQR, 0, 0);
-      ctx.drawImage(tempCanvas, qrX, qrY);
-
-      // Update the SVG content (hidden element for download)
-      updateSVG(canvas);
-
+      
+      // Draw QR code if we have data
+      if (qrModulesData.length > 0) {
+        const moduleCount = qrModulesData.length;
+        const qrSize = 200;
+        const moduleSize = qrSize / moduleCount;
+        
+        let qrX = centerX - qrSize / 2;
+        let qrY = centerY - qrSize / 2;
+        
+        // Adjust position based on shape
+        if (shape === "triangle") {
+          const triangleHeight = (Math.sqrt(3) / 2) * shapeWidth;
+          qrX = centerX - qrSize / 2.3 - 8;
+          qrY = centerY - triangleHeight/2 + (triangleHeight * 0.50);
+        }
+        
+        // Create QR code gradient
+        const qrGradientId = "qrGradient";
+        const qrGradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+        qrGradient.setAttribute("id", qrGradientId);
+        qrGradient.setAttribute("x1", "0%");
+        qrGradient.setAttribute("y1", "0%");
+        qrGradient.setAttribute("x2", "100%");
+        qrGradient.setAttribute("y2", "0%");
+        
+        const qrStop1 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+        qrStop1.setAttribute("offset", "0%");
+        qrStop1.setAttribute("stop-color", fgColor1);
+        
+        const qrStop2 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+        qrStop2.setAttribute("offset", "50%");
+        qrStop2.setAttribute("stop-color", fgColor2);
+        
+        const qrStop3 = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+        qrStop3.setAttribute("offset", "100%");
+        qrStop3.setAttribute("stop-color", fgColor3);
+        
+        qrGradient.appendChild(qrStop1);
+        qrGradient.appendChild(qrStop2);
+        qrGradient.appendChild(qrStop3);
+        
+        // Add to defs (or use existing defs)
+        let defs = svgRef.current.querySelector("defs");
+        if (!defs) {
+          defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+          svgRef.current.appendChild(defs);
+        }
+        defs.appendChild(qrGradient);
+        
+        // Create a group for the QR code modules
+        const qrGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        
+        // Draw individual QR modules
+        for (let y = 0; y < moduleCount; y++) {
+          for (let x = 0; x < moduleCount; x++) {
+            if (qrModulesData[y][x]) {
+              const moduleX = qrX + x * moduleSize;
+              const moduleY = qrY + y * moduleSize;
+              
+              const gradientFactor = x / moduleCount;
+              const color = interpolateThreeColors(fgColor1, fgColor2, fgColor3, gradientFactor);
+              const hexColor = rgbToHex(color);
+              
+              const qrModule = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              qrModule.setAttribute("x", moduleX);
+              qrModule.setAttribute("y", moduleY);
+              qrModule.setAttribute("width", moduleSize);
+              qrModule.setAttribute("height", moduleSize);
+              qrModule.setAttribute("fill", hexColor);
+              
+              qrGroup.appendChild(qrModule);
+            }
+          }
+        }
+        
+        svgRef.current.appendChild(qrGroup);
+      }
+      
+      // Update canvas for display while keeping SVG for download
+      updateCanvasFromSVG();
+      
     } catch (err) {
-      console.error('Error generating shape:', err);
+      console.error('Error generating SVG:', err);
     }
   };
 
-  // Function to create SVG from canvas
-  const updateSVG = (canvas) => {
-    if (!svgRef.current) return;
+  const updateCanvasFromSVG = () => {
+    if (!canvasRef.current || !svgRef.current) return;
     
-    // Clear previous SVG content
-    while (svgRef.current.firstChild) {
-      svgRef.current.removeChild(svgRef.current.firstChild);
-    }
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
     
-    // Get image data from canvas
-    const dataURL = canvas.toDataURL('image/png');
+    // Clear canvas
+    ctx.clearRect(0, 0, size, size);
     
-    // Create image element inside SVG
-    const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-    image.setAttribute('width', size);
-    image.setAttribute('height', size);
-    image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', dataURL);
+    // Convert SVG to an image and draw on canvas
+    const svgData = new XMLSerializer().serializeToString(svgRef.current);
+    const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
     
-    svgRef.current.appendChild(image);
+    const img = new Image();
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
   };
 
   const handleDownload = () => {
     if (!svgRef.current) return;
     
-    // Create a serialized SVG string
-    const serializer = new XMLSerializer();
-    const svgString = serializer.serializeToString(svgRef.current);
+    // Create a serialized SVG string with proper XML namespaces
+    const svgData = new XMLSerializer().serializeToString(svgRef.current);
+    const svgString = svgData
+      .replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"');
     
-    // Add XML declaration and doctype
-    const svgData = '<?xml version="1.0" standalone="no"?>\n' + svgString;
+    // Add XML declaration
+    const svgDoctype = '<?xml version="1.0" standalone="no"?>\n';
+    const svgFinal = svgDoctype + svgString;
     
     // Create a Blob with the SVG data
-    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const blob = new Blob([svgFinal], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     
     // Create a download link and trigger it
@@ -277,7 +400,7 @@ const GradientShapeQR = () => {
   };
 
   useEffect(() => {
-    updateCanvas();
+    updateSVG();
   }, [text, fgColor1, fgColor2, fgColor3, shape]);
 
   return (
@@ -370,13 +493,11 @@ const GradientShapeQR = () => {
             height={size}
             style={{ maxWidth: '100%', height: 'auto' }}
           />
-          {/* Hidden SVG element used for download */}
           <svg 
             ref={svgRef} 
             width={size} 
             height={size} 
-            xmlns="http://www.w3.org/2000/svg" 
-            xmlnsXlink="http://www.w3.org/1999/xlink" 
+            version="1.1"
             style={{ display: 'none' }} 
           />
         </div>
