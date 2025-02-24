@@ -36,38 +36,61 @@ const GradientShapeQR = () => {
   // Generate QR code data
   const generateQRCode = async (text) => {
     try {
-      const QRCode = await import('qrcode');
+      const QRCodeModule = await import('qrcode');
+      
       return new Promise((resolve) => {
-        QRCode.create(text, {
-          errorCorrectionLevel: 'H'
-        }, (err, qrData) => {
+        // Create a QR code data structure
+        QRCodeModule.default.toDataURL(text, {
+          errorCorrectionLevel: 'H',
+          margin: 1,
+          width: size
+        }, (err, url) => {
           if (err) {
             console.error("QR code generation error:", err);
             resolve([]);
             return;
           }
           
-          if (!qrData || !qrData.modules || !qrData.modules.data) {
-            console.error("Invalid QR data structure:", qrData);
-            resolve([]);
-            return;
-          }
-          
-          // Convert data to 2D array
-          const modules = qrData.modules.data;
-          const moduleCount = qrData.modules.size;
-          
-          const moduleArray = [];
-          for (let y = 0; y < moduleCount; y++) {
-            const row = [];
-            for (let x = 0; x < moduleCount; x++) {
-              const index = y * moduleCount + x;
-              row.push(modules[index]);
+          // Create a temporary image to load the QR code
+          const img = new Image();
+          img.onload = () => {
+            // Create a temporary canvas to analyze the QR code pixels
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            const moduleSize = Math.floor(img.width / 25); // Approximate size of each QR module
+            tempCanvas.width = img.width;
+            tempCanvas.height = img.height;
+            
+            // Draw the QR code on the temporary canvas
+            tempCtx.drawImage(img, 0, 0);
+            
+            // Extract the QR code modules
+            const moduleArray = [];
+            for (let y = 0; y < 25; y++) {
+              const row = [];
+              for (let x = 0; x < 25; x++) {
+                // Sample the center of each expected module
+                const centerX = Math.floor(x * moduleSize + moduleSize / 2);
+                const centerY = Math.floor(y * moduleSize + moduleSize / 2);
+                const pixelData = tempCtx.getImageData(centerX, centerY, 1, 1).data;
+                
+                // If the pixel is dark (QR code is black on white)
+                // pixelData[0], pixelData[1], pixelData[2] are R, G, B values
+                const isDark = pixelData[0] < 128; // Check if R value is dark
+                row.push(isDark);
+              }
+              moduleArray.push(row);
             }
-            moduleArray.push(row);
-          }
+            
+            resolve(moduleArray);
+          };
           
-          resolve(moduleArray);
+          img.onerror = () => {
+            console.error("Failed to load QR code image");
+            resolve([]);
+          };
+          
+          img.src = url;
         });
       });
     } catch (error) {
