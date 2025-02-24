@@ -317,6 +317,7 @@ const GradientShapeQR = () => {
     // Crea un documento SVG con tutti gli elementi
     const svgNS = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(svgNS, "svg");
+
     svg.setAttribute("width", size);
     svg.setAttribute("height", size);
     svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
