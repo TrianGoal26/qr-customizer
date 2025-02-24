@@ -10,6 +10,7 @@ const GradientShapeQR = () => {
   const [fgColor3, setFgColor3] = useState("#0066FF");
   const [shape, setShape] = useState("triangle");
   const canvasRef = useRef(null);
+  const svgRef = useRef(null);
   const size = 550;
   const padding = 20;
   const pixelSize = 6.5;
@@ -220,18 +221,59 @@ const GradientShapeQR = () => {
       tempCtx.putImageData(gradientQR, 0, 0);
       ctx.drawImage(tempCanvas, qrX, qrY);
 
+      // Update the SVG content (hidden element for download)
+      updateSVG(canvas);
+
     } catch (err) {
       console.error('Error generating shape:', err);
     }
   };
 
-  const handleDownload = () => {
-    if (!canvasRef.current) return;
+  // Function to create SVG from canvas
+  const updateSVG = (canvas) => {
+    if (!svgRef.current) return;
     
+    // Clear previous SVG content
+    while (svgRef.current.firstChild) {
+      svgRef.current.removeChild(svgRef.current.firstChild);
+    }
+    
+    // Get image data from canvas
+    const dataURL = canvas.toDataURL('image/png');
+    
+    // Create image element inside SVG
+    const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    image.setAttribute('width', size);
+    image.setAttribute('height', size);
+    image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', dataURL);
+    
+    svgRef.current.appendChild(image);
+  };
+
+  const handleDownload = () => {
+    if (!svgRef.current) return;
+    
+    // Create a serialized SVG string
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgRef.current);
+    
+    // Add XML declaration and doctype
+    const svgData = '<?xml version="1.0" standalone="no"?>\n' + svgString;
+    
+    // Create a Blob with the SVG data
+    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a download link and trigger it
     const link = document.createElement('a');
-    link.download = 'gradient-qr-shape.png';
-    link.href = canvasRef.current.toDataURL('image/png');
+    link.href = url;
+    link.download = 'gradient-qr-shape.svg';
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    
+    // Clean up the URL object
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
   useEffect(() => {
@@ -317,7 +359,7 @@ const GradientShapeQR = () => {
         onClick={handleDownload}
         className="mb-6 px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
       >
-        Download QR Code
+        Download QR Code as SVG
       </button>
 
       <div className="p-6 rounded-lg w-full max-w-md">
@@ -327,6 +369,15 @@ const GradientShapeQR = () => {
             width={size}
             height={size}
             style={{ maxWidth: '100%', height: 'auto' }}
+          />
+          {/* Hidden SVG element used for download */}
+          <svg 
+            ref={svgRef} 
+            width={size} 
+            height={size} 
+            xmlns="http://www.w3.org/2000/svg" 
+            xmlnsXlink="http://www.w3.org/1999/xlink" 
+            style={{ display: 'none' }} 
           />
         </div>
       </div>
